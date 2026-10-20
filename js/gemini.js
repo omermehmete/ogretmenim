@@ -23,9 +23,14 @@ async function gCall(input, json, onText){
     ? GEMINI.proxy.replace(/\/+$/, "") + "/" + GEMINI.model + ":" + method
     : `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI.model}:${method}?${stream ? "alt=sse&" : ""}key=${encodeURIComponent(gKey())}`;
   let res;
-  try{ res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
-  catch(e){ throw {code:"network"}; }
-  if(!res.ok){ const st = res.status; throw {code: st === 429 ? "rate_limited" : (st === 400 || st === 401 || st === 403) ? "bad_key" : st === 404 ? "bad_model" : "network"}; }
+  // Google meşgulse (500/503) birkaç saniye bekleyip 2 kez daha dene
+  for(let deneme = 0; ; deneme++){
+    try{ res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
+    catch(e){ throw {code:"network"}; }
+    if((res.status === 503 || res.status === 500) && deneme < 2){ await new Promise(r => setTimeout(r, 2000 * (deneme + 1))); continue; }
+    break;
+  }
+  if(!res.ok){ const st = res.status; throw {code: st === 429 ? "rate_limited" : (st === 400 || st === 401 || st === 403) ? "bad_key" : st === 404 ? "bad_model" : (st === 503 || st === 500) ? "busy" : "network"}; }
   if(!stream){ const t = gText(await res.json()); if(!t) throw {code:"empty"}; return t; }
   const rd = res.body.getReader(), dec = new TextDecoder(); let buf = "", text = "";
   for(;;){
@@ -64,6 +69,7 @@ aiErr = function(e){
   const c = e && e.code;
   if(c === "bad_key") return "Gemini anahtarı geçersiz ya da bu siteden kullanılmasına izin verilmiyor. Yapay zekâ ayarını kontrol et.";
   if(c === "bad_model") return "Gemini modeli bulunamadı. Kodda GEMINI.model adını kontrol et.";
+  if(c === "busy") return "Yapay zekâ şu an çok yoğun. Biraz bekleyip tekrar dene.";
   if(c === "empty") return "Gemini boş yanıt verdi. Soruyu biraz değiştirip tekrar dene.";
   return _aiErrG(e);
 };
